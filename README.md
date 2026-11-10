@@ -6,6 +6,8 @@ YouTube Terminal is a lightweight command-line tool that lets you search, play, 
 
 With a native macOS floating player, you can keep videos visible while working in other applications.
 
+This project was built using vibe coding.
+
 ## Features
 
 - **YouTube Search** — Search for videos directly from your terminal.
