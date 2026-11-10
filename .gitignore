@@ -6,3 +6,14 @@ venv/
 .env
 .env.*
 *.log
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+.env.*

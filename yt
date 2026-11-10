@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """YT Mini 5 — control a compact Chrome YouTube app window from Terminal (macOS)."""
-import json, pathlib, re, shutil, subprocess, sys, os
+import json, pathlib, re, shutil, subprocess, sys, os, socket, time
 
 DATA = pathlib.Path.home()/'.yt-mini-native'
 DATA.mkdir(parents=True,exist_ok=True)
@@ -146,6 +146,50 @@ return ""''' % jsstr('watch?v='+video)
 end tell''' % (ident,width,height))
     st.update(video=video,index=index,window_id=ident)
     save_state(st)
+    if is_pinned():
+        pin_command('video '+video)
+        try: with_window('set minimized of w to true')
+        except RuntimeError: pass
+
+PIN_BIN = pathlib.Path.home()/'.local'/'share'/'youtube-terminal'/'floating-player'
+
+def pin_command(message):
+    try:
+        with socket.create_connection(('127.0.0.1', 49381), timeout=.5) as conn:
+            conn.sendall((message+'\n').encode())
+            return conn.recv(64).startswith(b'ok')
+    except OSError:
+        return False
+
+def is_pinned():
+    return pin_command('ping')
+
+def start_pin():
+    st=load_state()
+    video=st.get('video')
+    if not video: raise RuntimeError('play a video first: yt play <url|index>')
+    if not PIN_BIN.is_file(): raise RuntimeError('floating player missing; run ./install.sh again (requires Xcode Command Line Tools)')
+    if is_pinned():
+        print('already pinned')
+        return
+    w,h=st.get('size',[300,250])
+    subprocess.Popen([str(PIN_BIN),video,str(w),str(h),st.get('theme','light')],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    for _ in range(40):
+        time.sleep(.15)
+        if is_pinned(): break
+    else: raise RuntimeError('floating player failed to start')
+    try: with_window('set minimized of w to true')
+    except RuntimeError: pass
+    print('pinned: native floating player (all apps and desktops)')
+
+def stop_pin():
+    if not is_pinned():
+        print('player is not pinned')
+        return
+    pin_command('quit')
+    try: with_window('set minimized of w to false\n set index of w to 1')
+    except RuntimeError: pass
+    print('unpinned: Chrome player restored')
 
 def main():
     a=sys.argv[1:]; cmd=a.pop(0) if a else None
@@ -174,25 +218,40 @@ def main():
         try:video=json.loads(RESULTS.read_text())[idx]['id']
         except (ValueError,IndexError,OSError,KeyError):raise RuntimeError('no more search results')
         open_video(video,idx)
+    elif cmd in ('dark', 'light'):
+        st=load_state();st['theme']=cmd;save_state(st)
+        if is_pinned():
+            if not pin_command('theme '+cmd): raise RuntimeError('could not update floating player theme')
+            print('floating player theme: '+cmd)
+        else:
+            print('saved '+cmd+' theme; run yt pin to apply it to the floating player')
+    elif cmd=='pin': start_pin()
+    elif cmd=='unpin': stop_pin()
     elif cmd=='size':
         if len(a)!=2 or not all(x.isdigit() for x in a):raise RuntimeError('invalid size (usage: yt size <width> <height>)')
         w,h=map(int,a)
         if not 180<=w<=1600 or not 160<=h<=1200:raise RuntimeError('size out of range (width: 180-1600, height: 160-1200)')
         # Keep top-left position, adjust bounds.
         st=load_state();st['size']=[w,h];save_state(st)
+        if is_pinned(): pin_command(f'size {w} {h}')
         try:with_window('set b to bounds of w\n set bounds of w to {item 1 of b, item 2 of b, (item 1 of b) + %d, (item 2 of b) + %d}'%(w,h))
         except RuntimeError:pass
+    elif cmd=='hide' and is_pinned(): pin_command('hide')
+    elif cmd=='show' and is_pinned(): pin_command('show')
     elif cmd=='hide':with_window('set minimized of w to true')
     elif cmd=='show':with_window('set minimized of w to false\n set index of w to 1\n activate')
     elif cmd=='close':
+        if is_pinned(): pin_command('quit')
         with_window('close w')
         st=load_state();st.pop('window_id',None);st.pop('video',None);save_state(st)
     elif cmd in ('pause','resume'):
-        player_key('k')
+        if is_pinned(): pin_command(cmd)
+        else: player_key('k')
     elif cmd=='stop':
-        player_key('k')
+        if is_pinned(): pin_command('pause')
+        else: player_key('k')
     elif cmd=='help':
-        print("yt <command> [args]\n\nsearch <query> | play <index|url> | next | prev\npause | resume | stop | size <width> <height>\nhide | show | close | help")
+        print("yt <command> [args]\n\nsearch <query> | play <index|url> | next | prev\npause | resume | stop | size <width> <height>\npin | unpin | dark | light | hide | show | close | help")
     elif cmd is None:
         return
     else:
